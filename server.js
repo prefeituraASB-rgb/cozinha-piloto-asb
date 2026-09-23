@@ -1,62 +1,107 @@
 import express from 'express';
-import fs from 'fs';
-import path from 'path';
+import mongoose from 'mongoose';
 
 const app = express();
-
-// Definição dinâmica de porta exigida por servidores de nuvem
-const PORT = process.env.PORT || 8000; 
+const PORT = process.env.PORT || 8000;
 
 app.use(express.json());
 app.use(express.static('public'));
 
-// Define se o banco roda na pasta persistente da nuvem (/data) ou local (./data)
-const PASTA_BANCO = process.env.RENDER ? '/data' : path.resolve('./data');
+// ==========================================================================
+// CONNECT NO MONGO ATLAS (Substitua <password> pela sua senha real)
+// ==========================================================================
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://admin_cozinha:SantaBarbara2026@clustercozinha.xxxx.mongodb.net/cozinha_piloto?retryWrites=true&w=majority";
 
-const obterCaminho = (tabela) => path.join(PASTA_BANCO, `${tabela}.json`);
+mongoose.connect(MONGO_URI)
+    .then(() => console.log("🔌 Conectado com sucesso ao MongoDB Atlas (HD na Nuvem)!"))
+    .catch((err) => console.error("❌ Erro fatal de conexão no banco na nuvem:", err));
 
-// Leitura genérica e segura de arquivos JSON
-const lerJson = (tabela) => {
-    const caminho = obterCaminho(tabela);
-    if (!fs.existsSync(caminho)) {
-        fs.mkdirSync(path.dirname(caminho), { recursive: true });
-        fs.writeFileSync(caminho, JSON.stringify([]));
-    }
-    return JSON.parse(fs.readFileSync(caminho, 'utf-8'));
-};
+// ==========================================================================
+// MODELAGEM DOS DADOS JSON (SCHEMAS OFICIAIS DO SEU ESCOPO)
+// ==========================================================================
 
-// Escrita genérica com rotina de cópia de segurança integrada
-const salvarJson = (tabela, dados) => {
-    fs.writeFileSync(obterCaminho(tabela), JSON.stringify(dados, null, 2));
-    executarBackupAutomatico(tabela);
-};
+// 1. Tabela: Usuários
+const UsuarioSchema = new mongoose.Schema({
+    nome: { type: String, required: true },
+    cpf: { type: String, required: true, unique: true },
+    perfil: { type: String, enum: ['ADMINISTRADOR', 'OPERADOR'], required: true },
+    senha: { type: String, required: true },
+    ativo: { type: Boolean, default: true }
+}, { timestamps: true });
 
-const executarBackupAutomatico = (tabela) => {
-    const pastaBackup = path.join(PASTA_BANCO, 'backups');
-    if (!fs.existsSync(pastaBackup)) fs.mkdirSync(pastaBackup, { recursive: true });
-    
-    const arquivoOrigem = obterCaminho(tabela);
-    const dataPrefixo = new Date().toISOString().split('T')[0];
-    const arquivoDestino = path.join(pastaBackup, `${dataPrefixo}_${tabela}.json`);
-    
-    if (fs.existsSync(arquivoOrigem)) {
-        fs.copyFileSync(arquivoOrigem, arquivoDestino);
-    }
-};
+// 2. Tabela: Entrada de Itens (Unificada Catálogo + Lote)
+const EntradaSchema = new mongoose.Schema({
+    nome_produto: { type: String, required: true },
+    metrica: { type: String, enum: ['KG', 'UNIDADE', 'LITROS', 'OUTRAS'], required: true },
+    quantidade_inicial: { type: Number, required: true },
+    quantidade_atual: { type: Number, required: true }, // Saldo que diminui no consumo
+    tipo_entrada: { type: String, enum: ['DOAÇÃO', 'NOTA FISCAL', 'DOCUMENTO INTERNO'], required: true },
+    numero_documento: { type: String, required: true },
+    estoque_minimo: { type: Number, required: true },
+    validade: { type: Date, required: true },
+    lote: { type: String, required: true },
+    usuario_logado: { type: String, required: true }
+}, { timestamps: true });
 
-// Endpoints Universais da API para o Front-End consumir
-app.get('/api/:tabela', (req, res) => {
-    try { res.json(lerJson(req.params.tabela)); }
-    catch (e) { res.status(500).json({ erro: "Erro ao ler a tabela" }); }
-});
+// 3. Tabela: Saída de Itens (Consumo)
+const SaidaSchema = new mongoose.Schema({
+    nome_produto: { type: String, required: true },
+    quantidade: { type: Number, required: true },
+    tipo_saida: { type: String, enum: ['RECEITA', 'ITEM A ITEM'], required: true },
+    local_envio: { type: String, required: true }, // Escola / Destino
+    lote: { type: String, required: true },
+    usuario_logado: { type: String, required: true }
+}, { timestamps: true });
 
-app.post('/api/salvar/:tabela', (req, res) => {
+// 4. Tabela: Avarias / Quebras
+const QuebraSchema = new mongoose.Schema({
+    produto: { type: String, required: true },
+    lote: { type: String, required: true },
+    quantidade: { type: Number, required: true },
+    motivo_quebra: { type: String, required: true },
+    usuario_logado: { type: String, required: true }
+}, { timestamps: true });
+
+// Criação dos Modelos de execução do MongoDB
+const Usuario = mongoose.model('Usuario', UsuarioSchema);
+const Entrada = mongoose.model('Entrada', EntradaSchema);
+const Saida = mongoose.model('Saida', SaidaSchema);
+const Quebra = mongoose.model('Quebra', QuebraSchema);
+
+// ==========================================================================
+// ROTAS UNIVERSAIS DA API (ENDPOINTS PARA O FRONT-END CONSUMIR)
+// ==========================================================================
+
+// Rota genérica de busca (GET)
+app.get('/api/:tabela', async (req, res) => {
     try {
-        salvarJson(req.params.tabela, req.body);
-        res.json({ sucesso: true });
+        const { tabela } = req.params;
+        let dados = [];
+        if (tabela === 'usuarios') dados = await Usuario.find();
+        if (tabela === 'entradas') dados = await Entrada.find();
+        if (tabela === 'saidas') dados = await Saida.find();
+        if (tabela === 'quebras') dados = await Quebra.find();
+        res.json(dados);
     } catch (e) {
-        res.status(500).json({ erro: `Erro ao salvar a tabela ${req.params.tabela}` });
+        res.status(500).json({ erro: `Erro ao buscar dados da tabela ${req.params.tabela}` });
     }
 });
 
-app.listen(PORT, () => console.log(`🚀 Servidor pronto e operando na porta ${PORT}`));
+// Rota genérica de salvamento (POST)
+app.post('/api/salvar/:tabela', async (req, res) => {
+    try {
+        const { tabela } = req.params;
+        let resultado;
+        
+        if (tabela === 'usuarios') resultado = await new Usuario(req.body).save();
+        if (tabela === 'entradas') resultado = await new Entrada(req.body).save();
+        if (tabela === 'saidas') resultado = await new Saida(req.body).save();
+        if (tabela === 'quebras') resultado = await new Quebra(req.body).save();
+        
+        res.json({ sucesso: true, id: resultado._id });
+    } catch (e) {
+        res.status(500).json({ erro: `Erro ao salvar dados na tabela ${req.params.tabela}` });
+    }
+});
+
+app.listen(PORT, () => console.log(`🚀 Servidor e API operando on-line na porta ${PORT}`));
