@@ -10,7 +10,7 @@ app.use(express.static('public'));
 // ==========================================================================
 // CONNECT NO MONGO ATLAS (Substitua <password> pela sua senha real)
 // ==========================================================================
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://admin_cozinha:<db_password>@clustercozinha.0xhhtls.mongodb.net/?appName=ClusterCozinha?retryWrites=true&w=majority";
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://admin_cozinha:SantaBarbara2026@clustercozinha.xxxx.mongodb.net/cozinha_piloto?retryWrites=true&w=majority";
 
 mongoose.connect(MONGO_URI)
     .then(() => console.log("🔌 Conectado com sucesso ao MongoDB Atlas (HD na Nuvem)!"))
